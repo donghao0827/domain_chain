@@ -23,16 +23,6 @@ const ruTxn = new Transaction(1, 1, 1, { id: "ru-0001", name: "Russia" }, "ru", 
 const txns = [cnTxn, usTxn, ukTxn, frTxn, ruTxn];
 DomainChain.createGenesisBlock(txns, worldState);
 
-const p1 = new Peer(3000, 3001,  {id: "cn-0001", name: "China"}, true, DomainChain, worldState);
-const p2 = new Peer(4000, 4001,  {id: "us-0001", name: "USA"}, false, DomainChain, worldState);
-const p3 = new Peer(5000, 5001,  {id: "uk-0001", name: "UK"}, false, DomainChain, worldState);
-const p4 = new Peer(6000, 6001,  {id: "fr-0001", name: "France"}, false, DomainChain, worldState);
-const p5 = new Peer(7000, 7001,  {id: "ru-0001", name: "Russia"}, false, DomainChain, worldState);
-p1.initP2PServer();
-p2.initP2PServer();
-p3.initP2PServer();
-p4.initP2PServer();
+const p5 = new Peer(7000, 7001, { id: "ru-0001", name: "Russia" }, false, DomainChain, worldState);
 p5.initP2PServer();
-
-p1.initHttpServer();
     

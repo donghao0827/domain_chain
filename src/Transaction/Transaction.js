@@ -5,7 +5,18 @@ const { encrypt, decrypt } = require('../../public/rsa/RSA');
 // console.log(decrypt(PK, cipher));
 
 class Transaction {
-    constructor(version, uuid, business, type, sponsor, domainName, domainType, domainInput, domainOutput, timestamp) {
+    constructor(
+            version, 
+            uuid, 
+            business, 
+            type, sponsor, 
+            domainName, 
+            domainInput, 
+            domainInputFromTxnHash, 
+            domainInputFromTxnIndex, 
+            domainOutput, 
+            timestamp
+    ) {
         const that = this;
         that.version = version;
         that.uuid = uuid;
@@ -13,9 +24,10 @@ class Transaction {
         that.type = type;
         that.sponsor = sponsor;
         that.domainName = domainName;
-        that.domainType = domainType;
         that.domainInput = domainInput;
         that.domainInputDigest = utils.calculateHash(this.domainInput);
+        that.domainInputFromTxnHash = domainInputFromTxnHash;
+        that.domainInputFromTxnIndex = domainInputFromTxnIndex;
         that.domainOutput = domainOutput;
         that.domainOutputDigest = utils.calculateHash(this.domainOutput);
         that.timestamp = timestamp;

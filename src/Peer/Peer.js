@@ -10,7 +10,9 @@ const { PK, SK } = require('../key/Key');
 const { encrypt, decrypt } = require('../../public/RSA/RSA');
 
 class Peer {
-    constructor(p2p_port, http_port, admin) {
+    constructor(p2p_port, http_port, admin, isLeader, blockChain, worldState) {
+        this.isLeader = isLeader || false;
+        this.blockChain = blockChain;
         this.p2p_port = p2p_port;
         this.http_port = http_port;
         this.sockets = [];
@@ -26,24 +28,30 @@ class Peer {
         this.tempTxnQueue = {};
         this.txnArray = [];
 
-        this.admin = { id: "cn-0001", name: "China", host: "127.0.0.1:3000" };
+        this.admin = admin;
         this.MCL = [
-            { id: "cn-0001", name: "China", host: "127.0.0.1:3000" },
-            { id: "us-0001", name: "USA", host: "127.0.0.1:4000" },
-            { id: "uk-0001", name: "UK", host: "127.0.0.1:5000" },
-            { id: "ru-0001", name: "Russia", host: "127.0.0.1:6000" },
-            { id: "fr-0001", name: "France", host: "127.0.0.1:7000" }
-        ],
-        this.view = 1,
+            { id: "cn-0001", name: "China" },
+            { id: "us-0001", name: "USA" },
+            { id: "uk-0001", name: "UK" },
+            { id: "fr-0001", name: "France" },
+            { id: "ru-0001", name: "Russia" }
+        ];
+        this.view = 1;
         this.hostGroup = [
+            '127.0.0.1:3000',
             '127.0.0.1:4000',
             '127.0.0.1:5000',
             '127.0.0.1:6000',
             '127.0.0.1:7000'
-        ],
-        this.worldState = {
-
-        }
+        ];
+        this.router = {
+            "cn-0001": "127.0.0.1:3000",
+            "us-0001": "127.0.0.1:4000",
+            "uk-0001": "127.0.0.1:5000",
+            "ru-0001": "127.0.0.1:6000",
+            "fr-0001": "127.0.0.1:7000",
+        };
+        this.worldState = worldState;
     }
 
     initKey() { //生成密钥对
@@ -56,6 +64,13 @@ class Peer {
     
         app.get('/peers', (req, res) => {//获取显示网络中存在的节点，
             res.send(this.sockets.map(s => s._socket.remoteAddress + ':' + s._socket.remotePort));
+        });
+
+        app.get('/query', (req, res) => {//查询域名，
+            if(req) {
+                const queryName = req.query.query_name;
+                res.send(this.worldState[queryName]);
+            }
         });
 
         app.post('/txn', (req, res) => {
@@ -71,7 +86,11 @@ class Peer {
         })
 
         app.get('/showtxn', (req, res) => {
-            res.send(this.txnArray.map( txn => 'txn' + txn));
+            res.send(this.txnArray.map( item => item.id + ':' + item.sponsor));
+        });
+      
+        app.get('/showblockchain', (req, res) => {
+            res.send("blockchain" + this.blockChain.chain.length);
         });
     
         app.post('/addPeer', (req, res) => {//请求添加新的节点{"peer" : "ws://localhost:6001"}
@@ -136,7 +155,7 @@ class Peer {
 
     initConnection(ws) {//初始化连接
         this.initMessageReceiver(ws);//信息处理
-        this.sockets.push(ws);
+        //this.sockets.push(ws);
         // initErrorHandler(ws);//错误状态处理
         //write(ws, blockchain[blockchain.length - 1]);//广播
         //write(ws, null);//广播
@@ -215,13 +234,13 @@ class Peer {
                 const num = msg.n;
                 const txn = msg.transaction;
                 const res = this.handlePrePrepare(msg);
-                if(res && this.ppmsgQuene[num] && this.ppmsgQuene[num] < 4) {
+                if(res && this.ppmsgQuene[num] && this.ppmsgQuene[num] - 1 < 4) {
                     this.ppmsgQuene[num]++;
+                } else if(res && this.ppmsgQuene[num] && this.ppmsgQuene[num] - 1 >= 4) { 
                     this.tempTxnQueue[num] = txn;
                     const txnResult = this.excuteTransaction(txn);
                     const pmsg = this.buildPrepareMessage(num, txnResult);
                     this.broadcast(this.hostGroup, pmsg);
-                } else if(res && this.ppmsgQuene[num] && this.ppmsgQuene[num] >= 4) { 
                     this.ppmsgQuene[num] = 0;
                 }
                 break;
@@ -230,12 +249,11 @@ class Peer {
                 console.log('get prepare message');
                 const num = msg.n;
                 const res = this.handlePrepare(msg);
-                if(res && this.pmsgQuene[num] && this.pmsgQuene[num] < 4) {
+                if(res && this.pmsgQuene[num] && this.pmsgQuene[num] - 1 < 4) {
                     this.pmsgQuene[num]++;
+                } else if(res && this.pmsgQuene[num] && this.pmsgQuene[num] - 1 >= 4) {
                     const cmsg = this.buildCommitMessage(num);
                     this.broadcast(this.hostGroup, cmsg);
-                } else if(res && this.pmsgQuene[num] && this.pmsgQuene[num] >= 4) {
-                    console.log(">>>>>>>>>>>>>", this.pmsgQuene);
                     this.pmsgQuene[num] = 0; 
                 }
                 break;
@@ -244,21 +262,26 @@ class Peer {
                 console.log('get commit message');
                 const num = msg.n;
                 const res = this.handleCommit(msg);
-                if(res && this.cmsgQuene[num] && this.cmsgQuene[num] < 4) {
+                const domainName = this.tempTxnQueue[num];
+                if(res && this.cmsgQuene[num] && this.cmsgQuene[num] - 1 < 4) {
                     this.cmsgQuene[num]++;
-                    const sponsor = msg.admin;
-                    const dstHost = sponsor.host;
-                    // const rmsg = this.buildReplyMessage(num);
-                    // this.send(dstHost, rmsg);
-                } else if(res && this.cmsgQuene[num] && this.cmsgQuene[num] >= 4) {
+                } else if(res && this.cmsgQuene[num] && this.cmsgQuene[num] - 1 >= 4) {
+                    const sponsor = this.tempTxnQueue[num].sponsor;
+                    const dstHost = this.router[sponsor.id];
                     this.txnArray.push(this.tempTxnQueue[num]);
+                    const rmsg = this.buildReplyMessage(num);
+                    this.send(dstHost, rmsg);
                     delete this.tempTxnQueue[num];
-                    console.log(">>>>>>>>>>>>>", this.rmsgQuene);
                     this.cmsgQuene[num] = 0; 
+                }
+                if(this.isLeader&&this.txnArray&&this.txnArray.length&&this.txnArray.length >= 2) {
+                    this.blockChain.addBlock(this.txnArray, this.worldState[domainName]);
+                    this.txnArray = [];
                 }
                 break;
             }
             case 4: {
+                console.log('get reply message');
                 break;
             }
             default: {
@@ -342,24 +365,60 @@ class Peer {
         const domainName = txn.domainName;
         const domainOutput = txn.domainOutput;
         if(!this.worldState[domainName]) {
-            this.worldState[domainName] = domainOutput;
-            txnResult = domainName;
+            txnResult = this.handleDomainOutput(domainName, domainOutput);
+            this.worldState[domainName] = txnResult;
         }
         return txnResult;
+    }
+
+    handleDomainOutput(domainName, DomainOutput) {
+        const len = DomainOutput.length;
+        let authRecords = [];
+        let extraRecords = [];
+        for(let i = 0; i < len; i++) {
+            (DomainOutput[i].Name === domainName) ? authRecords.push(DomainOutput[i]) : extraRecords.push(DomainOutput[i]);   
+        }
+        return {
+            Auth_count: authRecords.length,
+            Extra_count: extraRecords.length,
+            Auth_details: authRecords.map( item => {
+                return {
+                    Name: item.Name,
+                    Type: item.Type,
+                    Class: item.Class,
+                    TTL: item.TTL,
+                    RData: {
+                        Name_server: item.Value
+                    }
+                }
+            }),
+            Extra_details: extraRecords.map( item => {
+                return {
+                    Name: item.Name,
+                    Type: item.Type,
+                    Class: item.Class,
+                    TTL: item.TTL,
+                    RData: {
+                        Addr: item.Value
+                    }
+                }
+            })
+        };
     }
 
     //-----------------------------------------构建交易-----------------------------------------
     buildTransaction(msg) {
         const version = 1;
         const business = 1;
-        const type = 1;
+        const type = msg.domainType || 0;
         const sponsor = msg.sponsor || {};
-        const domainType = msg.domainType || 0;
         const domainName = msg.domainName || "";
         const domainInput = msg.domainInput || [];
+        const domainInputFromTxnHash = msg.domainInputFromTxnHash || "";
+        const domainInputFromTxnIndex = msg.domainInputFromTxnIndex || -1;
         const domainOutput = msg.domainOutput || [];
         const timestamp = (new Date()).getTime();
-        const txn = new Transaction(version, this.txnID, business, type, sponsor, domainName, domainType, domainInput, domainOutput, timestamp);
+        const txn = new Transaction(version, this.txnID, business, type, sponsor, domainName, domainInput, domainInputFromTxnHash, domainInputFromTxnIndex, domainOutput, timestamp);
         this.txnID++;
         return JSON.stringify(txn);
     }
@@ -406,6 +465,25 @@ class Peer {
         const cmsg = new Message(mh, mb);
         this.msgID++;
         return JSON.stringify(cmsg);
+    }
+
+    buildReplyMessage(num) {
+        const business = 2;
+        const type = 4;
+        const timestamp = (new Date()).getTime();
+        const view = this.view;
+        const n = num;
+
+        const currentTxn = this.tempTxnQueue[num];
+        const domainName = currentTxn.domainName;
+        const txnResult = this.worldState[domainName];
+
+        const mh = new MsgHead(this.msgID, business, type, this.admin, timestamp);
+        const mb = new MsgReply(view, n, utils.calculateHash(currentTxn), txnResult);
+        const rmsg = new Message(mh, mb);
+        this.msgID++;
+        return JSON.stringify(rmsg);
+
     }
 }
 

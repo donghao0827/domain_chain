@@ -1,4 +1,5 @@
 const SHA256 = require("crypto-js/sha256");
+const { MerkleTree } = require('merkletreejs');
 
 var Utils = function() {};
 Utils.prototype = {
@@ -12,7 +13,12 @@ Utils.prototype = {
             str = str + obj[index];
         }
         return str;
-    }
+    },
+    calculateMerkleRoot(transactions){
+        const leaves = transactions.map(x =>this.calculateHash(x));
+        const tree = new MerkleTree(leaves, SHA256);
+        return tree;
+     }
 } 
 
 module.exports = new Utils();
