@@ -104,11 +104,11 @@ class Peer {
         });
       
         app.get('/showblockchain', (req, res) => {
-            res.send("blockchain" + this.blockChain.chain);
+            res.send(this.blockChain.chain);
         });
 
         app.get('/showws', (req, res) => {
-            res.send("worldstate" + JSON.stringify(this.worldState));
+            res.send(JSON.stringify(this.worldState));
         });
 
         app.get('/showtempws', (req, res) => {
@@ -275,7 +275,6 @@ class Peer {
                     this.ppmsgQuene[num]++;
                 } else if(res && this.ppmsgQuene[num] && this.ppmsgQuene[num] - 1 >= 4) { 
                     this.tempTxnQueue[num] = txn;
-                    console.log("55555555555555555555", this.tempMCL);
                     const txnResult = this.excuteTransaction(txn, this.tempWorldState, this.tempMCL);
                     const pmsg = this.buildPrepareMessage(num, txnResult);
                     this.broadcast(this.hostGroup, pmsg);
@@ -347,7 +346,6 @@ class Peer {
         const verifyIdentityResult = this.verifyIdentity(leader, this.MCL);
         const verifyDigestResult = this.verifyDigest(transaction, txnDigest);
         const verifySponsorResult = this.verifySponsor(transaction);
-        console.log("-------------------------", verifySignResult, verifyIdentityResult, verifyDigestResult, verifySponsorResult);
         const verifyResult = verifySignResult && verifyIdentityResult && verifyDigestResult && verifySponsorResult;
         return verifyResult;
     }
@@ -365,7 +363,6 @@ class Peer {
         const verifySignResult = this.verifySignature(pbuf, sig, PK);
         const verifyIdentityResult = this.verifyIdentity(responser, this.MCL);
         const verifyDigestResult = this.verifyDigest(txnResult, txnResultDigest);
-        console.log("-------------------------", verifySignResult, verifyIdentityResult, verifyDigestResult);
         const verifyResult = verifySignResult && verifyIdentityResult && verifyDigestResult;
         return verifyResult;
     }
@@ -397,7 +394,6 @@ class Peer {
         const stringMCL = MCL.map((item) => {
             return utils.calculateHash(JSON.stringify(item));
         });
-        console.log('???????????????????', signer, MCL);
         return stringMCL.indexOf(utils.calculateHash(JSON.stringify(signer))) !== -1;
     }
 
@@ -408,7 +404,6 @@ class Peer {
         } else if(domainType === 2 || domainType === 3) {
             const sponsor = txn.sponsor;
             const domainName = txn.domainName;
-            // console.log('++++++++++++++++++++++', domainName, sponsor, this.MCL, this.MCL[this.searchMCL(sponsor, this.MCL)].domain);
             return this.MCL[this.searchMCL(sponsor, this.MCL)].domain.indexOf(domainName) !== -1;
         }
     }
@@ -424,11 +419,9 @@ class Peer {
         const sponsor = txn.sponsor;
         const domainName = txn.domainName;
         const domainOutput = txn.domainOutput;
-        // console.log("qqqqqqqqqqqqqqqqqqqqqqqq", sponsor, domainName, domainOutput, MCL);
         if(!worldState[domainName]) {
             txnResult = this.handleDomainOutput(domainName, domainOutput);
             this.tempWorldState[domainName] = txnResult;
-            // console.log("xxxxxxxxxxxxxxxxxxxxxx", sponsor, MCL);
             MCL[this.searchMCL(sponsor, MCL)].domain.push(domainName);
         } else {
             txnResult = this.handleDomainOutput(domainName, domainOutput);
@@ -571,7 +564,6 @@ class Peer {
 
     //-----------------------------------------检索管理认证列表-----------------------------------------
     searchMCL(sponsor, MCL) {
-        //console.log("<<<<<<<<<<<<<<<<<<<", sponsor, MCL);
         const id = sponsor.id;
         let index = 0;
         for (const i of MCL) {
