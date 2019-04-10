@@ -35,4 +35,15 @@ class MsgReply {
     }
 }
 
-module.exports = { MsgPrePrepare, MsgPrepare, MsgCommit, MsgReply };
+class MsgBlock {
+    constructor(block, blockDigest, worldState, worldStateDigest, MCL, MCLDigest) {
+        this.block = block;
+        this.blockDigest = blockDigest;
+        this.worldState = worldState;
+        this.worldStateDigest = worldStateDigest;
+        this.MCL = MCL;
+        this.MCLDigest = MCL;
+    }
+}
+
+module.exports = { MsgPrePrepare, MsgPrepare, MsgCommit, MsgReply, MsgBlock };

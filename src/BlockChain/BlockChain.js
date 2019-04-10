@@ -15,17 +15,21 @@ class BlockChain{
     }
 
     getLatestBlock() {
-        console.log(this.chain);
         return this.chain[this.chain.length - 1];
     }
-    addBlock(transactions, worldState) {
+    addBlock(block) {
+        this.chain.push(block);
+        //console.log('>>>>>>>>>>>>>>>>>>>>>>>>>', this.chain);
+        return this.chain;
+    }
+    buildBlock(transactions, worldState) {
         const previousHash = this.getLatestBlock().hash;
         const merkle = Utils.calculateMerkleRoot(transactions);  
         const timestamp = (new Date()).getTime();
-        const worldStateHash = Utils.calculateHash(worldState);
+        const worldStateHash = Utils.calculateHash(JSON.stringify(worldState));
         const txnCount = transactions.length;
         const block = new Block(1, this.chain.length + 1, previousHash, merkle, timestamp, worldStateHash, txnCount, transactions);
-        this.chain.push(block);
+        return block;
     }
     isChainValid() {
         for (let i = 1; i < this.chain.length; i++){

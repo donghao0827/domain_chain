@@ -4,7 +4,7 @@ const bodyParser = require('body-parser');
 const Transaction = require('../Transaction/Transaction');
 const Message = require('../Message/Message');
 const MsgHead = require('../Message/MsgHead');
-const { MsgPrePrepare, MsgPrepare, MsgCommit, MsgReply } = require('../Message/MsgBody');
+const { MsgPrePrepare, MsgPrepare, MsgCommit, MsgReply, MsgBlock } = require('../Message/MsgBody');
 const utils = require("../../public/Utils");
 const { PK, SK } = require('../key/Key');
 const { encrypt, decrypt } = require('../../public/RSA/RSA');
@@ -19,6 +19,7 @@ class Peer {
         this.txnID = 0;
         this.msgID = 0;
         this.pbft_n = 0;
+        this.blockID = 0;
 
         this.ppmsgQuene = [];
         this.pmsgQuene = [];
@@ -30,11 +31,18 @@ class Peer {
 
         this.admin = admin;
         this.MCL = [
-            { id: "cn-0001", name: "China" },
-            { id: "us-0001", name: "USA" },
-            { id: "uk-0001", name: "UK" },
-            { id: "fr-0001", name: "France" },
-            { id: "ru-0001", name: "Russia" }
+            { id: "cn-0001", name: "China", domain: ['cn'] },
+            { id: "us-0001", name: "USA", domain: ['us'] },
+            { id: "uk-0001", name: "UK", domain: ['uk'] },
+            { id: "fr-0001", name: "France", domain: ['fr'] },
+            { id: "ru-0001", name: "Russia", domain: ['ru'] }
+        ];
+        this.tempMCL = [
+            { id: "cn-0001", name: "China", domain: ['cn'] },
+            { id: "us-0001", name: "USA", domain: ['us'] },
+            { id: "uk-0001", name: "UK", domain: ['uk'] },
+            { id: "fr-0001", name: "France", domain: ['fr'] },
+            { id: "ru-0001", name: "Russia", domain: ['ru'] }
         ];
         this.view = 1;
         this.hostGroup = [
@@ -51,7 +59,8 @@ class Peer {
             "ru-0001": "127.0.0.1:6000",
             "fr-0001": "127.0.0.1:7000",
         };
-        this.worldState = worldState;
+        this.worldState = JSON.parse(JSON.stringify(worldState));
+        this.tempWorldState = JSON.parse(JSON.stringify(worldState));;
     }
 
     initKey() { //生成密钥对
@@ -90,7 +99,19 @@ class Peer {
         });
       
         app.get('/showblockchain', (req, res) => {
-            res.send("blockchain" + this.blockChain.chain.length);
+            res.send("blockchain" + this.blockChain.chain);
+        });
+
+        app.get('/showws', (req, res) => {
+            res.send("worldstate" + JSON.stringify(this.worldState));
+        });
+
+        app.get('/showtempws', (req, res) => {
+            res.send("tempworldstate" + JSON.stringify(this.tempWorldState));
+        });
+        
+        app.get('/showmcl', (req, res) => {
+            res.send(this.MCL.map( item => item.id + item.name + item.domain));
         });
     
         app.post('/addPeer', (req, res) => {//请求添加新的节点{"peer" : "ws://localhost:6001"}
@@ -211,6 +232,17 @@ class Peer {
                 this.VRFQueue.push(msg);
                 break;
             };
+            case 4: {
+                break;
+            };
+            case 5: {
+                this.MCL = msg.MCL;
+                this.admin = this.MCL[this.searchMCL(this.admin, this.MCL)];
+                this.worldState = msg.worldState;
+                this.blockChain.addBlock(msg.block)
+                console.log('get blockchain!', this.blockChain);
+                break;
+            };
             default: {
                 break;
             }
@@ -238,7 +270,8 @@ class Peer {
                     this.ppmsgQuene[num]++;
                 } else if(res && this.ppmsgQuene[num] && this.ppmsgQuene[num] - 1 >= 4) { 
                     this.tempTxnQueue[num] = txn;
-                    const txnResult = this.excuteTransaction(txn);
+                    console.log("55555555555555555555", this.tempMCL);
+                    const txnResult = this.excuteTransaction(txn, this.tempWorldState, this.tempMCL);
                     const pmsg = this.buildPrepareMessage(num, txnResult);
                     this.broadcast(this.hostGroup, pmsg);
                     this.ppmsgQuene[num] = 0;
@@ -262,11 +295,11 @@ class Peer {
                 console.log('get commit message');
                 const num = msg.n;
                 const res = this.handleCommit(msg);
-                const domainName = this.tempTxnQueue[num];
+                const domainName = this.tempTxnQueue[num].domainName;
+                const sponsor = this.tempTxnQueue[num].sponsor;
                 if(res && this.cmsgQuene[num] && this.cmsgQuene[num] - 1 < 4) {
                     this.cmsgQuene[num]++;
                 } else if(res && this.cmsgQuene[num] && this.cmsgQuene[num] - 1 >= 4) {
-                    const sponsor = this.tempTxnQueue[num].sponsor;
                     const dstHost = this.router[sponsor.id];
                     this.txnArray.push(this.tempTxnQueue[num]);
                     const rmsg = this.buildReplyMessage(num);
@@ -275,8 +308,13 @@ class Peer {
                     this.cmsgQuene[num] = 0; 
                 }
                 if(this.isLeader&&this.txnArray&&this.txnArray.length&&this.txnArray.length >= 2) {
-                    this.blockChain.addBlock(this.txnArray, this.worldState[domainName]);
+                    const newBlock = this.blockChain.buildBlock(this.txnArray, this.worldState);
+                    this.MCL = this.tempMCL;
+                    this.worldState = this.tempWorldState;
+                    const bmsg = this.buildBlockMessage(newBlock, this.worldState, this.MCL)
+                    this.broadcast(this.hostGroup, bmsg);
                     this.txnArray = [];
+                    this.tempMCL = JSON.parse(JSON.stringify(this.MCL));
                 }
                 break;
             }
@@ -303,7 +341,9 @@ class Peer {
         const verifySignResult = this.verifySignature(ppbuf, sig, PK);
         const verifyIdentityResult = this.verifyIdentity(leader, this.MCL);
         const verifyDigestResult = this.verifyDigest(transaction, txnDigest);
-        const verifyResult = verifySignResult && verifyIdentityResult && verifyDigestResult;
+        const verifySponsorResult = this.verifySponsor(transaction);
+        console.log("-------------------------", verifySignResult, verifyIdentityResult, verifyDigestResult, verifySponsorResult);
+        const verifyResult = verifySignResult && verifyIdentityResult && verifyDigestResult && verifySponsorResult;
         return verifyResult;
     }
 
@@ -320,6 +360,7 @@ class Peer {
         const verifySignResult = this.verifySignature(pbuf, sig, PK);
         const verifyIdentityResult = this.verifyIdentity(responser, this.MCL);
         const verifyDigestResult = this.verifyDigest(txnResult, txnResultDigest);
+        console.log("-------------------------", verifySignResult, verifyIdentityResult, verifyDigestResult);
         const verifyResult = verifySignResult && verifyIdentityResult && verifyDigestResult;
         return verifyResult;
     }
@@ -349,9 +390,22 @@ class Peer {
 
     verifyIdentity(signer, MCL) {
         const stringMCL = MCL.map((item) => {
-            return utils.calculateHash(item);
+            return utils.calculateHash(JSON.stringify(item));
         });
-        return stringMCL.indexOf(utils.calculateHash(signer)) !== -1;
+        console.log('???????????????????', signer, MCL);
+        return stringMCL.indexOf(utils.calculateHash(JSON.stringify(signer))) !== -1;
+    }
+
+    verifySponsor(txn) {
+        const domainType = txn.type;
+        if(domainType === 1) {
+            return true;
+        } else if(domainType === 2 || domainType === 3) {
+            const sponsor = txn.sponsor;
+            const domainName = txn.domainName;
+            // console.log('++++++++++++++++++++++', domainName, sponsor, this.MCL, this.MCL[this.searchMCL(sponsor, this.MCL)].domain);
+            return this.MCL[this.searchMCL(sponsor, this.MCL)].domain.indexOf(domainName) !== -1;
+        }
     }
 
     verifyDigest(Info, InfoDigest) {
@@ -360,18 +414,28 @@ class Peer {
     }
 
     //-----------------------------------------执行交易-----------------------------------------
-    excuteTransaction(txn) {
+    excuteTransaction(txn, worldState, MCL) {
         let txnResult = null;
+        const sponsor = txn.sponsor;
         const domainName = txn.domainName;
         const domainOutput = txn.domainOutput;
-        if(!this.worldState[domainName]) {
+        // console.log("qqqqqqqqqqqqqqqqqqqqqqqq", sponsor, domainName, domainOutput, MCL);
+        if(!worldState[domainName]) {
             txnResult = this.handleDomainOutput(domainName, domainOutput);
-            this.worldState[domainName] = txnResult;
+            this.tempWorldState[domainName] = txnResult;
+            // console.log("xxxxxxxxxxxxxxxxxxxxxx", sponsor, MCL);
+            MCL[this.searchMCL(sponsor, MCL)].domain.push(domainName);
+        } else {
+            txnResult = this.handleDomainOutput(domainName, domainOutput);
+            this.tempWorldState[domainName] = txnResult;
         }
         return txnResult;
     }
 
     handleDomainOutput(domainName, DomainOutput) {
+        if(DomainOutput.length === 0) {
+            return null;
+        }
         const len = DomainOutput.length;
         let authRecords = [];
         let extraRecords = [];
@@ -461,7 +525,7 @@ class Peer {
         const n = num;
 
         const mh = new MsgHead(this.msgID, business, type, this.admin, timestamp);
-        const mb = new MsgPrepare(view, n);
+        const mb = new MsgCommit(view, n);
         const cmsg = new Message(mh, mb);
         this.msgID++;
         return JSON.stringify(cmsg);
@@ -479,11 +543,38 @@ class Peer {
         const txnResult = this.worldState[domainName];
 
         const mh = new MsgHead(this.msgID, business, type, this.admin, timestamp);
-        const mb = new MsgReply(view, n, utils.calculateHash(currentTxn), txnResult);
+        const mb = new MsgReply(view, n, utils.calculateHash(JSON.stringify(currentTxn)), txnResult);
         const rmsg = new Message(mh, mb);
         this.msgID++;
         return JSON.stringify(rmsg);
 
+    }
+
+    buildBlockMessage(block, worldState, MCL) {
+        const id = this.blockID;
+        const business = 5; 
+        const type = 1;
+        const timestamp = (new Date()).getTime();
+        const admin = this.admin;
+        
+        const mh = new MsgHead(id, business, type, admin, timestamp);
+        const mb = new MsgBlock(block, utils.calculateHash(JSON.stringify(block)), worldState, utils.calculateHash(worldState), MCL, utils.calculateHash(MCL));
+        const bmsg = new Message(mh, mb);
+        this.blockID++;
+        return JSON.stringify(bmsg);
+    }
+
+    //-----------------------------------------检索管理认证列表-----------------------------------------
+    searchMCL(sponsor, MCL) {
+        //console.log("<<<<<<<<<<<<<<<<<<<", sponsor, MCL);
+        const id = sponsor.id;
+        let index = 0;
+        for (const i of MCL) {
+            if(id === i.id) {
+                index = MCL.indexOf(i);
+            }
+        }
+        return  index;
     }
 }
 

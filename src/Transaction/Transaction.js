@@ -1,5 +1,5 @@
 var utils = require("../../public/Utils");
-const { PK, SK } = require('../key/Key');
+const { PK, SK } = require('../Key/Key');
 const { encrypt, decrypt } = require('../../public/rsa/RSA');
 // const cipher = encrypt(SK, Buffer.from('11'));
 // console.log(decrypt(PK, cipher));
