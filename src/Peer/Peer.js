@@ -100,11 +100,11 @@ class Peer {
         })
 
         app.get('/showtxn', (req, res) => {
-            res.send(this.txnArray.map( item => item.id + ':' + item.sponsor));
+            res.send(JSON.stringify(this.txnArray));
         });
       
         app.get('/showblockchain', (req, res) => {
-            res.send(this.blockChain.chain);
+            res.send(JSON.stringify(this.blockChain.chain));
         });
 
         app.get('/showws', (req, res) => {
@@ -112,11 +112,11 @@ class Peer {
         });
 
         app.get('/showtempws', (req, res) => {
-            res.send("tempworldstate" + JSON.stringify(this.tempWorldState));
+            res.send(JSON.stringify(this.tempWorldState));
         });
         
         app.get('/showmcl', (req, res) => {
-            res.send(this.MCL.map( item => item.id + item.name + item.domain));
+            res.send(JSON.stringify(this.MCL));
         });
     
         app.post('/addPeer', (req, res) => {//请求添加新的节点{"peer" : "ws://localhost:6001"}
@@ -185,7 +185,7 @@ class Peer {
         // initErrorHandler(ws);//错误状态处理
         //write(ws, blockchain[blockchain.length - 1]);//广播
         //write(ws, null);//广播
-        console.log('new peer:' + ws._socket.remoteAddress + ':' + ws._socket.remotePort);
+        //console.log('new peer:' + ws._socket.remoteAddress + ':' + ws._socket.remotePort);
     };
 
     initMessageReceiver(ws) {//信息处理
@@ -219,7 +219,7 @@ class Peer {
         const business = parseInt(msg.business) || 0;
         switch(business) {
             case 1: {
-                console.log("get Transaction");
+                console.log("----------------------Get Transaction----------------------");
                 const res = this.transactionHandler(msg);
                 if(res) {
                     const ppmsg = this.buildPrePrepareMessage(msg, this.pbft_n);
@@ -229,7 +229,6 @@ class Peer {
                 break;
             };
             case 2: {
-                console.log("get Message");
                 this.PBFTHandler(msg);
                 break;
             };
@@ -245,7 +244,7 @@ class Peer {
                 this.admin = this.MCL[this.searchMCL(this.admin, this.MCL)];
                 this.worldState = msg.worldState;
                 this.blockChain.addBlock(msg.block)
-                console.log('get blockchain!', this.blockChain);
+                console.log('Create New Blockchain!', this.blockChain);
                 break;
             };
             default: {
@@ -267,7 +266,7 @@ class Peer {
         const type = msg.type;
         switch(type) {
             case 1: {
-                console.log('get preprepare message');
+                console.log('Get Preprepare Message');
                 const num = msg.n;
                 const txn = msg.transaction;
                 const res = this.handlePrePrepare(msg);
@@ -278,12 +277,13 @@ class Peer {
                     const txnResult = this.excuteTransaction(txn, this.tempWorldState, this.tempMCL);
                     const pmsg = this.buildPrepareMessage(num, txnResult);
                     this.broadcast(this.hostGroup, pmsg);
+                    console.log("----------------------Finish Preprepare Section----------------------");
                     this.ppmsgQuene[num] = 0;
                 }
                 break;
             };
             case 2: {
-                console.log('get prepare message');
+                console.log('Get Prepare Message');
                 const num = msg.n;
                 const res = this.handlePrepare(msg);
                 if(res && this.pmsgQuene[num] && this.pmsgQuene[num] - 1 < 4) {
@@ -291,12 +291,13 @@ class Peer {
                 } else if(res && this.pmsgQuene[num] && this.pmsgQuene[num] - 1 >= 4) {
                     const cmsg = this.buildCommitMessage(num);
                     this.broadcast(this.hostGroup, cmsg);
+                    console.log("----------------------Finish Prepare Section----------------------");
                     this.pmsgQuene[num] = 0; 
                 }
                 break;
             };
             case 3: {
-                console.log('get commit message');
+                console.log('Get Commit Message');
                 const num = msg.n;
                 const res = this.handleCommit(msg);
                 const domainName = this.tempTxnQueue[num].domainName;
@@ -309,6 +310,7 @@ class Peer {
                     const rmsg = this.buildReplyMessage(num);
                     this.send(dstHost, rmsg);
                     delete this.tempTxnQueue[num];
+                    console.log("----------------------Finish Commit Section----------------------");
                     this.cmsgQuene[num] = 0; 
                 }
                 if(this.isLeader&&this.txnArray&&this.txnArray.length&&this.txnArray.length >= 2) {
@@ -323,7 +325,7 @@ class Peer {
                 break;
             }
             case 4: {
-                console.log('get reply message');
+                console.log('End of Agreement');
                 break;
             }
             default: {
