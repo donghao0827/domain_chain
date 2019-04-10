@@ -6,7 +6,7 @@ const Message = require('../Message/Message');
 const MsgHead = require('../Message/MsgHead');
 const { MsgPrePrepare, MsgPrepare, MsgCommit, MsgReply, MsgBlock } = require('../Message/MsgBody');
 const utils = require("../../public/Utils");
-const { PK, SK } = require('../key/Key');
+const { PK, SK } = require('../Key/Key');
 const { encrypt, decrypt } = require('../../public/RSA/RSA');
 
 class Peer {
@@ -78,7 +78,12 @@ class Peer {
         app.get('/query', (req, res) => {//查询域名，
             if(req) {
                 const queryName = req.query.query_name;
-                res.send(this.worldState[queryName]);
+		const response = {
+		    Code: 10000,
+		    Msg: "success",
+		    Data: this.worldState[queryName]
+		}
+                res.send(response);
             }
         });
 
