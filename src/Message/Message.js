@@ -1,6 +1,6 @@
 var utils = require("../../public/Utils");
-const { PK, SK } = require('../key/Key');
-const { encrypt, decrypt } = require('../../public/rsa/RSA');
+const { PK, SK } = require('../Key/Key');
+const { encrypt, decrypt } = require('../../public/RSA/RSA');
 
 class Message {
     constructor(msghead, msgbody){
