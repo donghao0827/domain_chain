@@ -18,7 +18,16 @@ Utils.prototype = {
         const leaves = transactions.map(x =>this.calculateHash(x));
         const tree = new MerkleTree(leaves, SHA256);
         return tree;
-     }
+    },
+    byte2Int(bytes) {
+        const len = bytes.length;
+        const bytesRev = bytes.reverse();
+        let count = 0;
+        for(let i = 0; i < len; i++) {
+            count = count + bytes[i];
+        }
+        return count;
+    }
 } 
 
 module.exports = new Utils();

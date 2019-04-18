@@ -4,10 +4,14 @@ const bodyParser = require('body-parser');
 const Transaction = require('../Transaction/Transaction');
 const Message = require('../Message/Message');
 const MsgHead = require('../Message/MsgHead');
-const { MsgPrePrepare, MsgPrepare, MsgCommit, MsgReply, MsgBlock } = require('../Message/MsgBody');
+const { MsgChangeView, MsgPrePrepare, MsgPrepare, MsgCommit, MsgReply, MsgBlock, MsgVote, MsgVoteResult, MsgVoteAck } = require('../Message/MsgBody');
 const utils = require("../../public/Utils");
-const { PK, SK } = require('../Key/Key');
+const keys = require('../Key/Key');
 const { encrypt, decrypt } = require('../../public/RSA/RSA');
+const fs = require('fs');
+const { ecvrf } = require('vrf.js');
+const Keys = require('../Key/Key.json');
+const TXNNUM = 2;
 
 class Peer {
     constructor(p2p_port, http_port, admin, isLeader, blockChain, worldState) {
@@ -15,16 +19,33 @@ class Peer {
         this.blockChain = blockChain;
         this.p2p_port = p2p_port;
         this.http_port = http_port;
+        this.leader = {id: "cn-0001", name: "China", domain:['cn']};
+        this.tempLeader = {};
+        this.PK = keys[this.leader.id].PK;
+        this.SK = Keys[this.leader.id].SK;
         this.sockets = [];
         this.txnID = 0;
         this.msgID = 0;
         this.pbft_n = 0;
+        this.vrf_n = 0;
+        this.vc_n = 0;
         this.blockID = 0;
 
         this.ppmsgQuene = [];
         this.pmsgQuene = [];
         this.cmsgQuene = [];
         this.rmsgQuene = [];
+
+        this.cvqmsgQuene = [];
+        this.cvrmsgQuene = [];
+        this.cvamsgQuene = [];
+        this.nvmsgQuene = [];
+        this.nvamsgQuene = [];
+        
+        this.vmsgQuene = [];
+        this.vrmsgQuene = [];
+        this.vamsgQuene = [];
+        this.vrfBallots = [];
 
         this.tempTxnQueue = {};
         this.txnArray = [];
@@ -44,7 +65,7 @@ class Peer {
             { id: "fr-0001", name: "France", domain: ['fr'] },
             { id: "ru-0001", name: "Russia", domain: ['ru'] }
         ];
-        this.view = 1;
+        this.view = 5;
         this.hostGroup = [
             '127.0.0.1:3000',
             '127.0.0.1:4000',
@@ -78,25 +99,46 @@ class Peer {
         app.get('/query', (req, res) => {//查询域名，
             if(req) {
                 const queryName = req.query.query_name;
-		const response = {
-		    Code: 10000,
-		    Msg: "success",
-		    Data: this.worldState[queryName]
-		}
-                res.send(response);
+                const hashInBlock = this.blockChain.getLatestBlock().worldStateHash;
+                const hashOfCurrent = utils.calculateHash(this.worldState);
+                const response = {
+                    Code: 10000,
+                    Msg: "success",
+                    Data: this.worldState[queryName]
+                }
+                if(!hashInBlock === hashOfCurrent)
+                {
+                    res.send(response);
+                } else {
+                    res.send("the worldState is bad");
+                }
             }
         });
 
         app.post('/txn', (req, res) => {
             if(req.body && req.body.sponsor) {
-                const txn = this.buildTransaction(req.body);
-                if(this.broadcast(this.hostGroup, txn)) {
-                    console.log("Transaction has been broadcasted to other peers");
-                }
                 res.send("OK");
+                const txn = this.buildTransaction(req.body);
+                const result = this.send('127.0.0.1:3000', txn);
+                if(res) {
+                    console.log(">>>>>>>>>>>>>starttime", (new Date()).getTime());
+                    console.log("Transaction has been broadcasted to other peers");
+                } else {
+                    const cvrmsg = this.buildChangeViewRequest();
+                    this.broadcast(this.hostGroup, cvrmsg);
+                    this.broadcast(this.hostGroup, cvrmsg);
+                    this.broadcast(this.hostGroup, cvrmsg);
+                    this.broadcast(this.hostGroup, cvrmsg);
+                    this.broadcast(this.hostGroup, cvrmsg);
+                }
             } else {
                 res.send("Error");
             }
+        })
+
+        app.post('/startvrf', (req, res) => {
+            console.log("----------------------Begin Vote----------------------");
+            this.broadcast(this.hostGroup, JSON.stringify({ "business": 2 ,"type": 7 })); 
         })
 
         app.get('/showtxn', (req, res) => {
@@ -197,8 +239,15 @@ class Peer {
         });
     };
 
+    initKey() {
+
+    }
+
     send(host, msg) {
         const client = new WebSocket(`ws://${ host }`);
+        client.onerror = function() {
+            console.log('Connection Error');
+        };
         client.on('open', () => {
             client.send(msg);
         });
@@ -207,10 +256,26 @@ class Peer {
     broadcast(hostGroup, msg) {
         hostGroup.forEach( host => {
             const client = new WebSocket(`ws://${ host }`);
+            client.onerror = function() {
+                console.log('Connection Error');
+            };
             client.on('open', () => {
                 client.send(msg);
             });
         });
+        // const len = hostGroup.length;
+        // for (let i = 0; i < len; i++) {
+        //     const client = new WebSocket(`ws://${ hostGroup[i] }`);
+        //     let flag = 0;
+        //     client.onerror = function() {
+        //         console.log('Connection Error');
+        //         flag = 1;
+        //     };
+        //     if(flag) break;
+        //     client.on('open', () => {
+        //         client.send(msg);
+        //     });
+        // }
         return true;
     }
 
@@ -220,6 +285,13 @@ class Peer {
         switch(business) {
             case 1: {
                 console.log("----------------------Get Transaction----------------------");
+                const type = msg.type;
+                switch(type) {
+                    case 1: { console.log("Register New Domain"); break };
+                    case 2: { console.log("Update Domain"); break };
+                    case 3: { console.log("Cancel Domain"); break };
+                    default: break;
+                }
                 const res = this.transactionHandler(msg);
                 if(res) {
                     const ppmsg = this.buildPrePrepareMessage(msg, this.pbft_n);
@@ -233,7 +305,8 @@ class Peer {
                 break;
             };
             case 3: {
-                this.VRFQueue.push(msg);
+                this.VRFHandler(msg);
+                //this.vrfQuene.push(msg);
                 break;
             };
             case 4: {
@@ -243,8 +316,12 @@ class Peer {
                 this.MCL = msg.MCL;
                 this.admin = this.MCL[this.searchMCL(this.admin, this.MCL)];
                 this.worldState = msg.worldState;
+                fs.writeFile('./worldState.json', JSON.stringify(this.worldState), function(err){
+                    if(err) console.log('写文件操作失败');
+                    else console.log('写文件操作成功');
+                });
                 this.blockChain.addBlock(msg.block)
-                console.log('Create New Blockchain!', this.blockChain);
+                console.log('Create New Blockchain!');
                 break;
             };
             default: {
@@ -255,10 +332,13 @@ class Peer {
 
     transactionHandler(txn) {
         const sig = txn.signature;
+        const sponsor = txn.sponsor;
         delete txn.signature;
+        const PK = keys[sponsor.id].PK;
         const tbuf = Buffer.from(JSON.stringify(txn));
-        const verifyResult = this.verifySignature(tbuf, sig, PK);
-        return verifyResult;
+        const verifySignResult = this.verifySignature(tbuf, sig, PK);
+        if(!verifySignResult) { console.log("signature fail"); }
+        return verifySignResult;
         
     }
 
@@ -270,24 +350,32 @@ class Peer {
                 const num = msg.n;
                 const txn = msg.transaction;
                 const res = this.handlePrePrepare(msg);
-                if(res && this.ppmsgQuene[num] && this.ppmsgQuene[num] - 1 < 4) {
-                    this.ppmsgQuene[num]++;
-                } else if(res && this.ppmsgQuene[num] && this.ppmsgQuene[num] - 1 >= 4) { 
+                if(res) {
                     this.tempTxnQueue[num] = txn;
                     const txnResult = this.excuteTransaction(txn, this.tempWorldState, this.tempMCL);
                     const pmsg = this.buildPrepareMessage(num, txnResult);
                     this.broadcast(this.hostGroup, pmsg);
                     console.log("----------------------Finish Preprepare Section----------------------");
-                    this.ppmsgQuene[num] = 0;
                 }
+                // if(res && this.ppmsgQuene[num] && this.ppmsgQuene[num] - 1 < 4) {
+                //     this.ppmsgQuene[num]++;
+                // } else if(res && this.ppmsgQuene[num] && this.ppmsgQuene[num] - 1 >= 4) { 
+                //     this.tempTxnQueue[num] = txn;
+                //     const txnResult = this.excuteTransaction(txn, this.tempWorldState, this.tempMCL);
+                //     const pmsg = this.buildPrepareMessage(num, txnResult);
+                //     this.broadcast(this.hostGroup, pmsg);
+                //     console.log("----------------------Finish Preprepare Section----------------------");
+                //     this.ppmsgQuene[num] = 0;
+                // }
                 break;
             };
             case 2: {
                 console.log('Get Prepare Message');
                 const num = msg.n;
                 const res = this.handlePrepare(msg);
+                this.pmsgQuene[num]++; //将计数器移出判断
                 if(res && this.pmsgQuene[num] && this.pmsgQuene[num] - 1 < 4) {
-                    this.pmsgQuene[num]++;
+                    
                 } else if(res && this.pmsgQuene[num] && this.pmsgQuene[num] - 1 >= 4) {
                     const cmsg = this.buildCommitMessage(num);
                     this.broadcast(this.hostGroup, cmsg);
@@ -300,10 +388,12 @@ class Peer {
                 console.log('Get Commit Message');
                 const num = msg.n;
                 const res = this.handleCommit(msg);
+                //console.log(">>>>>>>>>>>>>>>>", this.tempTxnQueue, num);
                 const domainName = this.tempTxnQueue[num].domainName;
                 const sponsor = this.tempTxnQueue[num].sponsor;
+                //this.cmsgQuene[num]++;
                 if(res && this.cmsgQuene[num] && this.cmsgQuene[num] - 1 < 4) {
-                    this.cmsgQuene[num]++;
+                    this.cmsgQuene[num]++;  
                 } else if(res && this.cmsgQuene[num] && this.cmsgQuene[num] - 1 >= 4) {
                     const dstHost = this.router[sponsor.id];
                     this.txnArray.push(this.tempTxnQueue[num]);
@@ -313,7 +403,7 @@ class Peer {
                     console.log("----------------------Finish Commit Section----------------------");
                     this.cmsgQuene[num] = 0; 
                 }
-                if(this.isLeader&&this.txnArray&&this.txnArray.length&&this.txnArray.length >= 2) {
+                if(this.isLeader&&this.txnArray&&this.txnArray.length&&this.txnArray.length >= TXNNUM) {
                     const newBlock = this.blockChain.buildBlock(this.txnArray, this.worldState);
                     this.MCL = this.tempMCL;
                     this.worldState = this.tempWorldState;
@@ -326,6 +416,136 @@ class Peer {
             }
             case 4: {
                 console.log('End of Agreement');
+                console.log(">>>>>>>>>>>>>endtime", (new Date()).getTime());
+                break;
+            }
+            case 6: {
+                console.log('Get View Change Request Message');
+                //加入验证是否需要视图更新
+                const res = this.handleChangeViewRequest(msg);
+                const num = this.vc_n;
+                this.cvqmsgQuene[num]++;
+                if(res && this.cvqmsgQuene[num] && this.cvqmsgQuene[num] - 1 >= 4) {
+                    const cvrmsg = this.buildChangeViewResponse();
+                    this.broadcast(this.hostGroup, cvrmsg);
+                    console.log("----------------------Finish View Change Request Section----------------------");
+                    this.cvqmsgQuene[num] = 0;
+                }
+                break;
+            }
+            case 7: {
+                console.log('Get View Change Response Message');
+                const res = this.handleChangeViewResponse(msg);
+                const num = this.vc_n;
+                this.cvrmsgQuene[num]++;
+                if(res && this.cvrmsgQuene[num] && this.cvrmsgQuene[num] - 1 >= 4) {
+                    const cvamsg = this.buildChangeViewAck();
+                    this.send(this.router["cn-0001"], cvamsg);
+                    console.log("----------------------Finish View Change Response Section----------------------");
+                    this.cvrmsgQuene[num] = 0;
+                    
+                    // const vmsg = this.buildVote();
+                    // this.broadcast(this.hostGroup, vmsg);
+                    // console.log("----------------------Start Vote----------------------");
+                }
+                break;
+            }
+            case 8: {
+                console.log('Get View Change Ack Message');
+                const res = this.handleChangeViewAck(msg);
+                const num = this.vc_n;
+                const newLeader = this.tempLeader;
+                const newLeaderHost = this.router[newLeader.id];
+                this.cvamsgQuene[num]++;
+                //console.log(">>>>>>", res, this.cvamsgQuene[num]);
+                if(res && this.cvamsgQuene[num] && this.cvamsgQuene[num] - 1 >= 4) {
+                    const nvmsg = this.buildNewView();
+                    this.broadcast(this.hostGroup, nvmsg);
+                    console.log("----------------------Finish View Change Ack Section----------------------");
+                    this.cvamsgQuene[num] = 0;
+                }
+                break;
+            }
+            case 9: {
+                console.log('Get New View Message');
+                const res = this.handleNewView(msg);
+                //const num = this.vc_n;
+                // this.nvmsgQuene[num]++;
+                //console.log(">>>>>>>>>>", res, this.nvmsgQuene[num], this.nvmsgQuene[num] - 1 >= 4);
+                if(res) {
+                    const nvcmsg = this.buildNewViewAck();
+                    this.broadcast(this.hostGroup, nvcmsg);
+                    console.log("----------------------Finish New View Section----------------------");
+                    // this.nvmsgQuene[num] = 0;
+                }
+                break;
+            }
+            case 10: {
+                console.log('Get New View Ack Message');
+                const res = this.handleNewViewAck(msg);
+                const num = this.vc_n;
+                this.nvamsgQuene[num]++;
+                if(res && this.nvamsgQuene[num] && this.nvamsgQuene[num] - 1 >= 4) {
+                    this.leader = this.tempLeader;
+                    console.log("End of ViewChange");
+                    console.log("the New Leader is ", this.tempLeader);
+                }
+                break;
+            } 
+            default: {
+                break;
+            }
+        }
+    }
+
+    VRFHandler(msg) {
+        const type = msg.type;
+        const num = this.vrf_n;
+        switch(type) {
+            case 1: {
+                console.log("Get Vote Message");
+                console.log("Ballot:", msg.ballot.value.data.slice(8, 16), "......");
+                const res = this.handleVote(msg);
+                this.vmsgQuene[num]++;
+                if(res && this.vmsgQuene[num] && this.vmsgQuene[num] - 1 < 4) {
+
+                } else if(res && this.vmsgQuene[num] && this.vmsgQuene[num] - 1 >= 4) {
+                    const vrmsg = this.buildVoteResult();
+                    this.broadcast(this.hostGroup, vrmsg);
+                    console.log("----------------------Finish VRF Vote Section----------------------");
+                    this.vmsgQuene[num] = 0; 
+                }
+                break;
+            }
+            case 2: {
+                console.log("Get Vote Result Message");
+                const res = this.handleVoteResult(msg);
+                this.vrmsgQuene[num]++;
+                if(res && this.vrmsgQuene[num] && this.vrmsgQuene[num] - 1 < 4) {
+
+                } else if(res && this.vrmsgQuene[num] && this.vrmsgQuene[num] - 1 >= 4) {
+                    const vamsg = this.buildVoteAck();
+                    this.broadcast(this.hostGroup, vamsg);
+                    console.log("----------------------Finish VRF Vote Result Section----------------------");
+                    this.vrmsgQuene[num] = 0; 
+                }
+                break;
+            }
+            case 3: {
+                console.log("Get Vote Ack Message");
+                const res = this.handleVoteAck(msg);
+                this.vamsgQuene[num]++;
+                if(res && this.vamsgQuene[num] && this.vamsgQuene[num] - 1 < 4) {
+
+                } else if(res && this.vamsgQuene[num] && this.vamsgQuene[num] - 1 >= 4) {
+                    console.log('----------------------New Leader Generated!\n New Leader is ', this.tempLeader.name, '----------------------');
+                    //console.log(">>>>>>>>>>>>>endtime", (new Date()).getTime());
+                    this.vamsgQuene[num] = 0; 
+                    this.vrf_n++;
+                    const nvamsg = this.buildChangeViewAck();
+                    //console.log(">>>>>>>>>>", this.tempLeader);
+                    this.send(this.router[this.tempLeader.id], nvamsg)
+                }
                 break;
             }
             default: {
@@ -334,6 +554,8 @@ class Peer {
         }
     }
 
+
+    //-----------------------------------------PBFT消息处理-----------------------------------------
     handlePrePrepare(ppmsg) {
         const sig = ppmsg.signature;
         delete ppmsg.signature;
@@ -343,11 +565,20 @@ class Peer {
         const transaction = ppmsg.transaction;
         const txnDigest = ppmsg.txnDigest
         if(this.ppmsgQuene[num] === undefined) this.ppmsgQuene[num] = 1;
-
+        const PK = keys[leader.id].PK;
         const verifySignResult = this.verifySignature(ppbuf, sig, PK);
+        if(!verifySignResult) { console.log("signature fail"); }
         const verifyIdentityResult = this.verifyIdentity(leader, this.MCL);
         const verifyDigestResult = this.verifyDigest(transaction, txnDigest);
         const verifySponsorResult = this.verifySponsor(transaction);
+        
+        const domainName = transaction.domainName;
+        const sponsor = transaction.sponsor;
+        const sponsorName = sponsor.name;
+        if(!verifySponsorResult) { 
+            console.log("illegal transaction"); 
+            console.log(domainName, "isn't belong ", sponsorName); 
+        }
         const verifyResult = verifySignResult && verifyIdentityResult && verifyDigestResult && verifySponsorResult;
         return verifyResult;
     }
@@ -361,8 +592,9 @@ class Peer {
         const txnResult = pmsg.txnResult;
         const txnResultDigest = pmsg.txnResultDigest;
         if(this.pmsgQuene[num] === undefined) this.pmsgQuene[num] = 1;
-
+        const PK = keys[responser.id].PK;
         const verifySignResult = this.verifySignature(pbuf, sig, PK);
+        //if(!verifySignResult) { console.log("signature fail"); }
         const verifyIdentityResult = this.verifyIdentity(responser, this.MCL);
         const verifyDigestResult = this.verifyDigest(txnResult, txnResultDigest);
         const verifyResult = verifySignResult && verifyIdentityResult && verifyDigestResult;
@@ -373,16 +605,160 @@ class Peer {
         const sig = cmsg.signature;
         delete cmsg.signature;
         const num = cmsg.n;
+        const sponsor = cmsg.admin;
         const cbuf = Buffer.from(JSON.stringify(cmsg));
         if(this.cmsgQuene[num] === undefined) this.cmsgQuene[num] = 1;
-
+        const PK = keys[sponsor.id].PK;
         const verifySignResult = this.verifySignature(cbuf, sig, PK);
+        if(!verifySignResult) { console.log("signature fail"); }
         const verifyResult = verifySignResult;
         return verifyResult;
     }
 
     handleReply() {
 
+    }
+
+    //-----------------------------------------ViewChange消息处理-----------------------------------------
+    handleChangeViewRequest(cvqmsg) {
+        const sig = cvqmsg.signature;
+        delete cvqmsg.signature;
+        const cvqbuf = Buffer.from(JSON.stringify(cvqmsg));
+        const num = this.vc_n;
+        if(this.cvqmsgQuene[num] === undefined) this.cvqmsgQuene[num] = 1;
+        const sponsor = cvqmsg.admin;
+        const PK = keys[sponsor.id].PK;
+        const verifySignResult = this.verifySignature(cvqbuf, sig, PK);
+        const verifyIdentity = this.verifyIdentity(sponsor, this.MCL);
+        const verifyResult = verifySignResult && verifyIdentity;
+        return verifyResult;
+    }
+
+    handleChangeViewResponse(cvrmsg) {
+        const sig = cvrmsg.signature;
+        delete cvrmsg.signature;
+        const cvrbuf = Buffer.from(JSON.stringify(cvrmsg));
+        const num = this.vc_n;
+        if(this.cvrmsgQuene[num] === undefined) this.cvrmsgQuene[num] = 1;
+        const sponsor = cvrmsg.admin;
+        const PK = keys[sponsor.id].PK;
+        const verifySignResult = this.verifySignature(cvrbuf, sig, PK);
+        const verifyIdentity = this.verifyIdentity(sponsor, this.MCL);
+        const verifyResult = verifySignResult && verifyIdentity;
+        return verifyResult;
+    }
+
+    handleChangeViewAck(cvamsg) {
+        const sig = cvamsg.signature;
+        delete cvamsg.signature;
+        const cvabuf = Buffer.from(JSON.stringify(cvamsg));
+        const num = this.vc_n;
+        if(this.cvamsgQuene[num] === undefined) this.cvamsgQuene[num] = 1;
+        const sponsor = cvamsg.admin;
+        const PK = keys[sponsor.id].PK;
+        const verifySignResult = this.verifySignature(cvabuf, sig, PK);
+        const verifyIdentity = this.verifyIdentity(sponsor, this.MCL);
+        const verifyResult = verifySignResult && verifyIdentity;
+        return verifyResult;
+    }
+
+    handleNewView(nvmsg) {
+        const sig = nvmsg.signature;
+        delete nvmsg.signature;
+        const nvbuf = Buffer.from(JSON.stringify(nvmsg));
+        const num = this.vc_n;
+        if(this.nvmsgQuene[num] === undefined) this.nvmsgQuene[num] = 1;
+        const sponsor = nvmsg.admin;
+        const PK = keys[sponsor.id].PK;
+        const verifySignResult = this.verifySignature(nvbuf, sig, PK);
+        const verifyIdentity = this.verifyIdentity(sponsor, this.MCL);
+        const verifyResult = verifySignResult && verifyIdentity;
+        return verifyResult;
+    }
+
+    
+    handleNewViewAck(nvamsg) {
+        const sig = nvamsg.signature;
+        delete nvamsg.signature;
+        const nvabuf = Buffer.from(JSON.stringify(nvamsg));
+        const num = this.vc_n;
+        if(this.nvamsgQuene[num] === undefined) this.nvamsgQuene[num] = 1;
+        const sponsor = nvamsg.admin;
+        const PK = keys[sponsor.id].PK;
+        const verifySignResult = this.verifySignature(nvabuf, sig, PK);
+        const verifyIdentity = this.verifyIdentity(sponsor, this.MCL);
+        const verifyResult = verifySignResult && verifyIdentity;
+        return verifyResult;
+    }
+
+    //-----------------------------------------VRF消息处理-----------------------------------------
+    handleVote(vmsg) {
+        const sig = vmsg.signature;
+        delete vmsg.signature;
+        const ballot = vmsg.ballot;
+        const vbuf = Buffer.from(JSON.stringify(vmsg));
+        const num = this.vrf_n;
+        if(this.vmsgQuene[num] === undefined) this.vmsgQuene[num] = 1;
+        const data = JSON.parse(JSON.stringify(ballot.value.data));
+        const proof = Buffer.from(ballot.proof.data);
+        const value = Buffer.from(ballot.value.data);
+        const ballotDigest = vmsg.ballotDigest;
+        const sponsor = vmsg.admin;
+        const PK2 = Buffer.from(Keys[sponsor.id].PK.data);
+        const SK2 = Buffer.from(Keys[sponsor.id].SK.data);
+        const random = JSON.stringify(this.view) + JSON.stringify(this.blockChain.getLatestBlock().index);
+        const verifiedResult = ecvrf.verify(PK2, random, proof, value);
+        const PK = keys[sponsor.id].PK;
+        const verifySignResult = this.verifySignature(vbuf, sig, PK);
+        if(!verifySignResult) { console.log("signature fail"); }
+        const verifyIdentity = this.verifyIdentity(sponsor, this.MCL);
+        const verifyDigestResult = this.verifyDigest(JSON.stringify(vmsg.ballot), ballotDigest);
+        const verifyResult = verifyDigestResult && verifySignResult && verifyIdentity && verifiedResult;
+
+        const vote = utils.byte2Int(data.splice(8, 4));
+        
+        this.vrfBallots.push({ "voter": sponsor.id, "vote": vote });
+        return verifyResult;
+    }
+
+    handleVoteResult(vrmsg) { 
+        const sig = vrmsg.signature;
+        delete vrmsg.signature;
+        const newLeader = vrmsg.newLeader;
+        const vrbuf = Buffer.from(JSON.stringify(vrmsg));
+        const num = this.vrf_n;
+        if(this.vrmsgQuene[num] === undefined) this.vrmsgQuene[num] = 1;
+        
+        const ballots = vrmsg.ballots;
+        const ballotsDigest = vrmsg.ballotsDigest;
+        const sponsor = vrmsg.admin;
+
+        const PK = keys[sponsor.id].PK;
+        const verifySignResult = this.verifySignature(vrbuf, sig, PK);
+        if(!verifySignResult) { console.log("signature fail"); }
+        const verifyIdentity = this.verifyIdentity(sponsor, this.MCL);
+        const verifyDigestResult = this.verifyDigest(JSON.stringify(ballots), ballotsDigest);
+
+        //判断是否以选出新leader
+        const verifyNewLeader = (utils.calculateHash(JSON.stringify(newLeader)) === utils.calculateHash(JSON.stringify(this.tempLeader)));
+        const verifyResult = verifyDigestResult && verifySignResult && verifyIdentity;
+        return verifyResult;
+    }
+
+    handleVoteAck(vamsg) {
+        const sig = vamsg.signature;
+        delete vamsg.signature;
+        const vabuf = Buffer.from(JSON.stringify(vamsg));
+        const num = this.vrf_n;
+        if(this.vamsgQuene[num] === undefined) this.vamsgQuene[num] = 1;
+        const sponsor = vamsg.admin;
+
+        const PK = keys[sponsor.id].PK;
+        const verifySignResult = this.verifySignature(vabuf, sig, PK);
+        if(!verifySignResult) { console.log("signature fail"); }
+        const verifyIdentity = this.verifyIdentity(sponsor, this.MCL);
+        const verifyResult = verifySignResult && verifyIdentity;
+        return verifyResult;
     }
 
     verifySignature(InfoBuffer, signature, PK) {
@@ -487,6 +863,7 @@ class Peer {
         return JSON.stringify(txn);
     }
 
+    //-----------------------------------------构建PBFT消息-----------------------------------------
     buildPrePrepareMessage(txn, n) {
         const business = 2;
         const type = 1;
@@ -550,6 +927,164 @@ class Peer {
 
     }
 
+    //-----------------------------------------构建ViewChange消息-----------------------------------------
+
+    buildChangeViewRequest() {
+        const business = 2; 
+        const type = 6;
+        const timestamp = (new Date()).getTime();
+        const view = this.view + 1;
+        const replica = this.admin;
+
+        const mh = new MsgHead(this.msgID, business, type, replica, timestamp);
+        const mb = new MsgChangeView(view);
+        const cvqmsg = new Message(mh, mb);
+        this.msgID++;
+        return JSON.stringify(cvqmsg);
+    }
+
+    buildChangeViewResponse() {
+        const business = 2; 
+        const type = 7;
+        const timestamp = (new Date()).getTime();
+        const view = this.view + 1;
+        const replica = this.admin;
+
+        const mh = new MsgHead(this.msgID, business, type, replica, timestamp);
+        const mb = new MsgChangeView(view);
+        const cvrmsg = new Message(mh, mb);
+        this.msgID++;
+        return JSON.stringify(cvrmsg);
+    }
+
+    buildChangeViewAck() {
+        const business = 2; 
+        const type = 8;
+        const timestamp = (new Date()).getTime();
+        const view = this.view + 1;
+        const replica = this.admin;
+
+        const mh = new MsgHead(this.msgID, business, type, replica, timestamp);
+        const mb = new MsgChangeView(view);
+        const cvamsg = new Message(mh, mb);
+        this.msgID++;
+        return JSON.stringify(cvamsg );
+    }
+
+    buildNewView() {
+        const business = 2; 
+        const type = 9;
+        const timestamp = (new Date()).getTime();
+        const view = this.view + 1;
+        const replica = this.admin;
+
+        const mh = new MsgHead(this.msgID, business, type, replica, timestamp);
+        const mb = new MsgChangeView(view);
+        const nvmsg = new Message(mh, mb);
+        this.msgID++;
+        return JSON.stringify(nvmsg );
+    }
+
+    buildNewView() {
+        const business = 2; 
+        const type = 9;
+        const timestamp = (new Date()).getTime();
+        const view = this.view + 1;
+        const replica = this.admin;
+
+        const mh = new MsgHead(this.msgID, business, type, replica, timestamp);
+        const mb = new MsgChangeView(view);
+        const nvmsg = new Message(mh, mb);
+        this.msgID++;
+        return JSON.stringify(nvmsg );
+    }
+
+    buildNewView() {
+        const business = 2; 
+        const type = 9;
+        const timestamp = (new Date()).getTime();
+        const view = this.view + 1;
+        const leader = this.admin;
+
+        const mh = new MsgHead(this.msgID, business, type, leader, timestamp);
+        const mb = new MsgChangeView(view);
+        const nvmsg = new Message(mh, mb);
+        this.msgID++;
+        return JSON.stringify(nvmsg );
+    }
+
+    buildNewViewAck() {
+        const business = 2; 
+        const type = 10;
+        const timestamp = (new Date()).getTime();
+        const view = this.view + 1;
+        const replica = this.admin;
+
+        const mh = new MsgHead(this.msgID, business, type, replica, timestamp);
+        const mb = new MsgChangeView(view);
+        const nvamsg = new Message(mh, mb);
+        this.msgID++;
+        return JSON.stringify(nvamsg );
+    }
+
+    //-----------------------------------------构建VRF消息-----------------------------------------
+    buildVote() {
+        const PK = Buffer.from(Keys[this.admin.id].PK.data);
+        const SK = Buffer.from(Keys[this.admin.id].SK.data);
+        const business = 3;
+        const type = 1;
+        const timestamp = (new Date()).getTime();
+        const view = this.view + 1;
+        const replica = this.admin;
+        const random = JSON.stringify(this.view) + JSON.stringify(this.blockChain.getLatestBlock().index);
+        const { value, proof } = ecvrf.vrf(PK, SK, random);
+        //console.log("<<<<<<<<<<<<<<<<", "\nPK", this.PK, "\nSK", this.SK, "\nrandom", random, "\nvalue", value, "\nproof", proof);
+        const ballot = { "value": value, "proof": proof };
+        const ballotDigest = utils.calculateHash(JSON.stringify(ballot));
+        const mh = new MsgHead(this.msgID, business, type, replica, timestamp);
+        const mb = new MsgVote(view, ballot, ballotDigest);
+        const vmsg = new Message(mh, mb);
+        this.msgID++;
+        return JSON.stringify(vmsg);
+    }
+
+    buildVoteResult() {
+        const business = 3;
+        const type = 2;
+        const timestamp = (new Date()).getTime();
+        const view = this.view + 1;
+        const replica = this.admin;
+        const ballots = this.vrfBallots;
+
+        //暂时这么写
+        const biggestVote = ballots.sort((a, b) => {
+            return b.vote - a.vote;
+        })[0];
+        const ballotsDigest = utils.calculateHash(JSON.stringify(ballots));
+        const newLeader = this.MCL[this.searchMCL({id: biggestVote.voter}, this.MCL)];
+        this.tempLeader = newLeader;
+        const mh = new MsgHead(this.msgID, business, type, replica, timestamp);
+        const mb = new MsgVoteResult(view, ballots, ballotsDigest, newLeader);
+        const vrmsg = new Message(mh, mb);
+        this.msgID++;
+        return JSON.stringify(vrmsg);
+    }
+
+    buildVoteAck() {
+        const business = 3;
+        const type = 3;
+        const timestamp = (new Date()).getTime();
+        const view = this.view + 1;
+        const responsor = this.admin;
+
+        const mh = new MsgHead(this.msgID, business, type, responsor, timestamp);
+        const mb = new MsgVoteAck(view);
+        const vamsg = new Message(mh, mb);
+        this.msgID++;
+        return JSON.stringify(vamsg);
+    }
+
+    //-----------------------------------------构建新区块消息-----------------------------------------
     buildBlockMessage(block, worldState, MCL) {
         const id = this.blockID;
         const business = 5; 

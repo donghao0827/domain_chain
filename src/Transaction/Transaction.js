@@ -1,15 +1,14 @@
 var utils = require("../../public/Utils");
-const { PK, SK } = require('../Key/Key');
+const keys = require('../Key/Key');
 const { encrypt, decrypt } = require('../../public/RSA/RSA');
-// const cipher = encrypt(SK, Buffer.from('11'));
-// console.log(decrypt(PK, cipher));
 
 class Transaction {
     constructor(
             version, 
             uuid, 
             business, 
-            type, sponsor, 
+            type, 
+            sponsor, 
             domainName, 
             domainInput, 
             domainInputFromTxnHash, 
@@ -23,6 +22,7 @@ class Transaction {
         that.business = business;
         that.type = type;
         that.sponsor = sponsor;
+        const SK = keys[that.sponsor.id].SK
         that.domainName = domainName;
         that.domainInput = domainInput;
         that.domainInputDigest = utils.calculateHash(this.domainInput);
