@@ -106,7 +106,7 @@ class Peer {
                     Msg: "success",
                     Data: this.worldState[queryName]
                 }
-                if(!hashInBlock === hashOfCurrent)
+                if(hashInBlock === hashOfCurrent)
                 {
                     res.send(response);
                 } else {
