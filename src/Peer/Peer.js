@@ -1,5 +1,6 @@
 const Express = require('express');
 const WebSocket = require('ws');
+const dgram = require('dgram');
 const bodyParser = require('body-parser');
 const Transaction = require('../Transaction/Transaction');
 const Message = require('../Message/Message');
@@ -86,6 +87,43 @@ class Peer {
 
     initKey() { //生成密钥对
 
+    }
+
+    initUDPServer() {
+        const udp_server = dgram.createSocket('udp4');
+        udp_server.bind(53); // 绑定端口
+
+        // 监听端口
+        udp_server.on('listening', function () {
+            console.log('udp server linstening 53.');
+        })
+
+        //接收消息
+        udp_server.on('message', function (msg, rinfo) {
+            const messageID = msg.slice(0, 2).readInt16BE(0);
+            const flag = msg.slice(2, 12);
+            const dataleft = msg.slice(12);
+            let i = 0;
+            let domainArray = [];
+            while (dataleft[i] !== 0) {
+                const len = dataleft[i];
+                const domain = dataleft.slice(i + 1, len + i + 1);
+                domainArray.push(domain);
+                i = i + len + 1;
+            } 
+            const domainName = domainArray.map((item)=>{
+                return item.toString();
+            }).join('.');
+            const tldName = domainArray[domainArray.length - 1].toString();
+            console.log(this.worldState[tldName]);
+            //udp_server.send();
+            //console.log(">>>>>>>>>>>>", msg.slice(2));
+        }.bind(this))
+        //错误处理
+        udp_server.on('error', function (err) {
+            console.log('some error on udp server.')
+            udp_server.close();
+        })
     }
 
     initHttpServer() {//控制节点的HTTP服务器  类似节点操作
@@ -1109,6 +1147,11 @@ class Peer {
             }
         }
         return  index;
+    }
+
+    //-----------------------------------------构建DNS响应报文-----------------------------------------
+    buildDNSResponse(query, response) {
+        
     }
 }
 

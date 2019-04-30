@@ -45,5 +45,7 @@ p3.initP2PServer();
 p4.initP2PServer();
 p5.initP2PServer();
 
+p1.initUDPServer();
+
 p1.initHttpServer();
     
