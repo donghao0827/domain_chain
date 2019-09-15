@@ -29,22 +29,22 @@ node peer-uk.js
 * Transaction.js 交易类
 * Key 各节点生成的本地密钥
 
-### API
-1. 查询域名
+### API 
+1. 查询域名  
     接口 /query  
     请求类型 GET  
     参数 query_name  
     实例 /query?query_name=cn  
-2. 查询临时世界状态（未生成新区快时）
+2. 查询临时世界状态（未生成新区快时）  
     接口 /showtempws  
     请求类型 GET  
-3. 查询世界状态 
+3. 查询世界状态   
     接口 /showws  
     请求类型 GET  
-4. 查询区块链
+4. 查询区块链  
     接口 /showblockchain  
     请求类型 GET  
-5. 交易
+5. 交易  
     接口 /txn  
     请求类型 POST  
     实例   
