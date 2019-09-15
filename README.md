@@ -47,7 +47,8 @@ node peer-uk.js
 5. 交易  
 * 接口 /txn  
 * 请求类型 POST  
-* 实例   
+* 实例  
+http://127.0.0.1:3001/txn 
 ``` json
 { 	
     "sponsor": { "id": "us-0001", "name": "USA", "domain": ["us"] },
@@ -58,20 +59,20 @@ node peer-uk.js
     "domainInputTxnHash": "d5087e070779e94ffb32093d",
     "domainInputTxnIndex": 0,
     "domainOutput":[	
-    {
-        "Name": "com",
-        "Type": 2,
-        "Class": 1,
-        "TTL":172800,
-        "Value":"a.gtld-servers.net"
-    },
-    {
-        "Name":"a.gtld-servers.net",
-        "Type":1,
-        "Class":1,
-        "TTL":172800, 
-        "Value": "192.5.6.30"
-    }
+        {
+            "Name": "com",
+            "Type": 2,
+            "Class": 1,
+            "TTL":172800,
+            "Value":"a.gtld-servers.net"
+        },
+        {
+            "Name":"a.gtld-servers.net",
+            "Type":1,
+            "Class":1,
+            "TTL":172800, 
+            "Value": "192.5.6.30"
+        }
     ]
 }
 ```

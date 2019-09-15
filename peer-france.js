@@ -26,6 +26,7 @@ DomainChain.createGenesisBlock(txns, worldState);
 
 const p4 = new Peer(6000, 6001, { id: "fr-0001", name: "France", domain: ['fr'] }, false, DomainChain, worldState);
 p4.initP2PServer();
+p1.initHttpServer();
 
 
     
