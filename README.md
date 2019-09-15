@@ -31,23 +31,23 @@ node peer-uk.js
 
 ### API
 1. 查询域名
-接口 /query
-请求类型 GET
-参数 query_name
-实例 /query?query_name=cn
+接口 /query  
+请求类型 GET  
+参数 query_name  
+实例 /query?query_name=cn  
 2. 查询临时世界状态（未生成新区快时）
-接口 /showtempws
-请求类型 GET
+接口 /showtempws  
+请求类型 GET  
 3. 查询世界状态
-接口 /showws
-请求类型 GET
+接口 /showws  
+请求类型 GET  
 4. 查询区块链
-接口 /showblockchain
-请求类型 GET
+接口 /showblockchain  
+请求类型 GET  
 5. 交易
-接口 /txn
-请求类型 POST
-实例 
+接口 /txn  
+请求类型 POST  
+实例   
 ``` json
 { 	
 	"sponsor": { "id": "us-0001", "name": "USA", "domain": ["us"] },
